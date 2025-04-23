@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+
+    tools {
+        maven 'maven3'
+
+    }
+
+    environment{
+        SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE_NAME = "palanipsb/webapp"
+        TAG = "latest"
+    }
+
+    stages {
+        stage('Git Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/palanipsb/sprigboot-Webapp-Jenkins-AKS-Cluster.git'
+            }
+        }
+
+        stage('Compile') {
+            steps {
+                sh "mvn compile"
+            }
+        }
+
+        stage('Trivy fs Scan') {
+            steps {
+                sh "trivy fs --format table -o fs.html ."
+            }
+        }
+
+        stage('Sonarqube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-scanner') {
+                    sh "$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectKey=Multitier -Dsonar.projectName=Multitier -Dsonar.java.binaries=target"
+                }
+            }
+        }
+
+        stage('Quality Gate Check') {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
+        }
+
+        stage('Maven Build Application') {
+            steps {
+                sh "mvn package -DskipTests=true"
+            }
+        }
+
+        stage('Docker Build and Tag image') {
+            steps {
+                script{
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        sh "docker build -t ${IMAGE_NAME}:${TAG} ."
+                    }
+                }
+            }
+        }
+
+        stage('Trivy image Scan') {
+            steps {
+                sh 'trivy image --format table -o fs.html ${IMAGE_NAME}:${TAG}'
+            }
+        }
+
+        stage('Docker push Image') {
+            steps {
+                script{
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        sh "docker push ${IMAGE_NAME}:${TAG}"
+                    }
+                }
+            }
+        }
+
+    }
+}
